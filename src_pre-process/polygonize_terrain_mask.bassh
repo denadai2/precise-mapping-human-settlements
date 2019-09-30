@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# Inserts into the database the steep terrain from the GUF+
+#
+
+NJOBS=15
+DIMENSION="05"
+INPUT_RASTERS_DIR="/unreliable/nadai/datasets/ema/terrain_mask/tif_sources"
+WARPED_RASTERS_DIR="/unreliable/nadai/datasets/ema/terrain_mask/tif_sources_warped"
+TMP_RASTERS_DIR="/data/nadai/tmp_ema_tif"
+VRT_PATH="/unreliable/nadai/datasets/ema/terrain_mask/terrain.vrt"
+OUTPUT_RASTERS="/unreliable/nadai/datasets/ema/terrain_mask/05x05"
+#"/unreliable/nadai/datasets/ema/terrain_mask/output_tif"
+
+GDALCOMMANDS_DIR="data/generated_files/GDAL_commands"
+
+warping_OutputFile="terrain_warping.txt"
+preprocessing_OutputFile="terrain_preprocessing.txt"
+polygonize_OutputFile="terrain_polygonize.txt"
+
+# Import utilities
+DIR="${BASH_SOURCE%/*}"
+if [[ ! -d "$DIR" ]]; then DIR="$PWD"; fi
+. "$DIR/incl.bash"
+. "$DIR/config.bash"
+
+read -p "Are you sure to wipe out everything and start the script? " -n 1 -r
+echo    # (optional) move to a new line
+if [[ $REPLY =~ ^[Yy]$ ]]
+then
+    # Clear files
+    echo "CLEAR FILES"
+    #echo -n > "${GDALCOMMANDS_DIR}/$warping_OutputFile"
+    echo -n > "${GDALCOMMANDS_DIR}/$preprocessing_OutputFile"
+    echo -n > "${GDALCOMMANDS_DIR}/$polygonize_OutputFile"
+    find ${OUTPUT_RASTERS} -type f -exec rm '{}' \;
+    find ${WARPED_RASTERS_DIR} -type f -exec rm '{}' \;
+    find ${TMP_RASTERS_DIR} -type f -exec rm '{}' \;
+    rm ${VRT_PATH}
+
+    echo "DELETE"
+    psql ${CONNECTION_STRING} -c "DROP INDEX terrain_gp_wkb_geometry_idx"
+    psql ${CONNECTION_STRING} -c "DELETE FROM terrain_gp"
+    psql ${CONNECTION_STRING} -c "ALTER SEQUENCE terrain_gp_ogc_fid_seq RESTART WITH 1;"
+
+    # Enhance resolution original tif
+    for entry in "${INPUT_RASTERS_DIR}"/*.tif
+    do
+       tifname=$(basename ${entry})
+       echo "gdalwarp -q -co "COMPRESS=LZW" -tr 0.000089830415712 -0.000089830461398 ${entry} ${WARPED_RASTERS_DIR}/${tifname}" >> "${GDALCOMMANDS_DIR}/$warping_OutputFile";
+    done
+
+    nice parallel --bar --jobs ${NJOBS} < "${GDALCOMMANDS_DIR}/$warping_OutputFile"
+    gdalbuildvrt ${VRT_PATH} -srcnodata "0" -hidenodata -resolution highest ${WARPED_RASTERS_DIR}/*.tif
+
+    # Finds all the tiles with land
+    tiff_list=$(ogrinfo -ro -al "PG:${OGR_CONNECTION_STRING}" -sql "SELECT tileid::varchar from tiles_land where type='tile${DIMENSION}'" | grep 'tileid (' | sed -E 's/.*String[\)]\s=\s//g' | uniq );
+    len=$(echo ${tiff_list} | wc -w)
+    echo ${len}
+
+    counter=0
+    for id in ${tiff_list};
+    do
+       extent=$( psql ${CONNECTION_STRING} -t -c "SELECT ST_Extent(geom) from tiles_land where tileid=${id} AND type='tile${DIMENSION}'" | head -n 1 | sed 's/ BOX(//g' | tr -d ')' | sed 's/,/ /g' | awk -F ' ' '{print $1, $4, $3, $2}' );
+       echo "nice gdal_translate -strict -a_nodata 0 -projwin ${extent} -of GTiff -q -co COMPRESS=PACKBITS ${VRT_PATH} ${TMP_RASTERS_DIR}/${id}.tif && nice python3 /data/nadai/ema/gdal_calc.py -A ${TMP_RASTERS_DIR}/${id}.tif --quiet --overwrite --outfile=${OUTPUT_RASTERS}/${id}.tif --calc=\"(A==1)\" --co=\"COMPRESS=PACKBITS\" --NoDataValue=0" >> "${GDALCOMMANDS_DIR}/$preprocessing_OutputFile";
+       echo "PG_USE_COPY=YES python3 /data/nadai/ema/gdal_polygonize.py ${OUTPUT_RASTERS}/${id}.tif -q -b 1 -f PostgreSQL PG:\"${OGR_CONNECTION_STRING}\" terrain_gp && rm ${OUTPUT_RASTERS}/${id}.tif && rm ${TMP_RASTERS_DIR}/${id}.tif" >> "${GDALCOMMANDS_DIR}/$polygonize_OutputFile";
+       ProgressBar ${counter} ${len}
+       counter=$((counter + 1))
+    done
+
+    echo -e "\nPARALLEL TRANSLATE"
+    parallel --bar --jobs ${NJOBS} < "${GDALCOMMANDS_DIR}/$preprocessing_OutputFile"
+
+    echo -e "\nPARALLEL POLYGONIZE"
+    parallel --bar --jobs ${NJOBS} < "${GDALCOMMANDS_DIR}/$polygonize_OutputFile"
+
+    echo -e "\nCREATING INDEXES"
+    psql ${CONNECTION_STRING} -c "CREATE INDEX ON terrain_gp USING GIST (wkb_geometry);"
+    psql ${CONNECTION_STRING} -c "CLUSTER terrain_gp USING terrain_gp_wkb_geometry_idx;"
+
+    echo -e "\nURBAN AREAS"
+    psql ${CONNECTION_STRING} -c "REFRESH MATERIALIZED VIEW steep_areas_05x05"
+fi

@@ -1,0 +1,8 @@
+{
+  "base_path": ".",
+  "generated_files_path": "data/generated_files",
+  "tiles_cache_path": "data/cache_numpy_05x05",
+  "rasterized_tiles_path": "data/GUF+/05x05_from_postgis",
+  "simulations_path": "data/generated_files/simulations2steps",
+  "simulations_cache_path": "data/generated_files/cachesimulations"
+}
