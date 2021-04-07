@@ -6,6 +6,7 @@ import os.path
 import argparse
 import time
 import sys
+from tqdm import tqdm
 
 ssw = sys.stdout.write
 ssf = sys.stdout.flush
@@ -43,7 +44,7 @@ class Rybski():
             return cp.asarray(dist_2d)
         return dist_2d
 
-    def simulate_rybski(self, M, stop_at_frac_compl, verbose=False):
+    def simulate_rybski(self, M, M_prev, stop_at_frac_compl, verbose=False):
 
         if self.twosteps is None:
             raise EnvironmentError("Set twosteps")
@@ -58,10 +59,15 @@ class Rybski():
         dist_gamma2 = dist ** -self.gamma2
         dist_gamma2[0, 0] = 0.
 
+        if self.use_gpu:
+            M = cp.asarray(M)
+            M_prev = cp.asarray(M_prev)
+            dist_gamma1 = cp.asarray(dist_gamma1)
+            dist_gamma2 = cp.asarray(dist_gamma2)
+
         if verbose:
             start = time.time()
         max_steps = 1000
-        cache_nonzeros = set()
         if self.use_gpu:
             cache_previous_step = cp.zeros_like(dist_gamma1)
         else:
@@ -86,22 +92,22 @@ class Rybski():
             if (self.twosteps and self.is_second_step) or ((not self.twosteps) and np.random.uniform() >= self.prob):
                 dist_gamma = dist_gamma2
 
-            nonzeros = np.argwhere(M > 0)
-            nonzeros = set(map(tuple, nonzeros))
+            if self.use_gpu:
+                new_nonzeros = cp.argwhere((M > 0) & (M_prev < 0.5))
+            else:
+                new_nonzeros = np.argwhere((M > 0) & (M_prev < 0.5))
+
             # Computes only the indexes not computed in the previous step
             if self.use_gpu:
-                q = sum(
-                    cp.roll(cp.roll(dist_gamma, i, axis=0), j, axis=1) for i, j in nonzeros.difference(cache_nonzeros))
+                q = sum(cp.roll(dist_gamma, (i, j), axis=(0, 1)) for i, j in cp.asnumpy(new_nonzeros))
             else:
-                q = sum(np.roll(dist_gamma, (i, j), axis=(0, 1)) for i, j in nonzeros.difference(cache_nonzeros))
+                q = sum(np.roll(dist_gamma, (i, j), axis=(0, 1)) for i, j in new_nonzeros)
             # Sum from previous step
             q += cache_previous_step
-            # Memorizes cache for the next step
-            cache_nonzeros = set(nonzeros).union(cache_nonzeros)
             # Multiplies by the matrix
             cache_previous_step = q[:]
             if self.use_gpu:
-                q = cp.asnumpy(q) * M0
+                q = q * M0
             else:
                 q = q * M0
 
@@ -115,10 +121,20 @@ class Rybski():
                 # 1% of the area becomes urban at each step
                 new_per_step = max(self.L ** 2 // (100.), 1)
 
-            q /= np.sum(q)
+            if self.use_gpu:
+                q /= cp.sum(q)
+                q = q.flatten()
+                q = cp.asnumpy(q)
+            else:
+                q /= np.sum(q)
+                q = q.flatten()
 
             asd = np.random.multinomial(int(new_per_step), q.flatten())
-            M += (np.reshape(asd, (self.L, self.L)) > 0.5) * 1.
+            M_prev = M.copy()
+            if self.use_gpu:
+                M += (cp.reshape(cp.asarray(asd), (self.L, self.L)) > 0.5) * 1.
+            else:
+                M += (np.reshape(asd, (self.L, self.L)) > 0.5) * 1.
 
         if verbose:
             ssw('\n');
@@ -127,7 +143,7 @@ class Rybski():
             end = time.time()
             print("Elapsed time", end - start)
 
-        return M
+        return M, M_prev
 
 
 def create_name_file(L, S, gamma_1, gamma_2, twosteps, configs):
@@ -149,6 +165,8 @@ def compute_simulation(gamma_1, gamma_2, S, max_urbanization, L, verbose, twoste
 
     prob = 0.5
     stop_at_frac_compl = S
+    if stop_at_frac_compl > max_urbanization:
+        stop_at_frac_compl = max_urbanization
     if not twosteps:
         prob = S
         stop_at_frac_compl = max_urbanization
@@ -157,19 +175,24 @@ def compute_simulation(gamma_1, gamma_2, S, max_urbanization, L, verbose, twoste
     ryb.set_twosteps(twosteps)
 
     M0 = np.zeros((L, L), dtype='float32')
+    M_prev = M0.copy()
     M0[L // 2, L // 2] = 1
 
     if twosteps:
         # 1st stage
-        M1 = ryb.simulate_rybski(M=M0, stop_at_frac_compl=stop_at_frac_compl, verbose=verbose)
+        M1, M_prev = ryb.simulate_rybski(M=M0, M_prev=M_prev, stop_at_frac_compl=stop_at_frac_compl, verbose=verbose)
 
-        # 2nd stage
-        ryb.is_second_step = True
-        M = ryb.simulate_rybski(M=M1, stop_at_frac_compl=max_urbanization, verbose=verbose)
+        frac_complete = np.sum(M1) / L ** 2
+        if frac_complete > max_urbanization:
+            M = M1
+        else:
+            # 2nd stage
+            ryb.is_second_step = True
+            M, M_prev = ryb.simulate_rybski(M=M1, M_prev=M_prev, stop_at_frac_compl=max_urbanization, verbose=verbose)
     else:
-        M = ryb.simulate_rybski(M=M0, stop_at_frac_compl=stop_at_frac_compl, verbose=verbose)
+        M, M_prev = ryb.simulate_rybski(M=M0, M_prev=M_prev, stop_at_frac_compl=stop_at_frac_compl, verbose=verbose)
 
-    np.savez(filename, M=M.astype('float32'))
+    np.savez(filename, M=cp.asnumpy(M).astype('float32'))
 
     return True
 
@@ -215,7 +238,8 @@ def main():
     # Sprawl: first compact, then random
     gamma_1 = [1., 1.4, 1.8, 2., 2.2, 2.4, 2.6, 2.8, 3., 3.2, 3.4, 3.6, 3.8, 4., 5., 6., 8., 10.]
     gamma_2 = gamma_1[:]
-    S = [0.00005, 0.0001, 0.001, 0.002, 0.004, 0.006, 0.008, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1,
+    S = [0.0002, 0.00005, 0.0008, 0.0001, 0.0004, 0.0006, 0.001, 0.002, 0.004, 0.006, 0.008, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
+         0.09, 0.1,
          0.2, 0.3,
          0.4, 0.5]
     if args.slist:
@@ -223,13 +247,21 @@ def main():
     max_urbanization = 0.6
 
     if not args.twosteps:
-        S = [0.5, 0.52, 0.54, 0.57, 0.61, 0.64, 0.66, 0.68, 0.71, 0.73, 0.75, 0.77, 0.79, 0.82, 0.84, 0.86, 0.89, 0.91,
-             0.93, 0.96, 0.98]
+        S = [0.5, 0.51, 0.52, 0.54, 0.57, 0.59, 0.61, 0.64, 0.66, 0.68, 0.71, 0.73, 0.75, 0.77, 0.79, 0.82, 0.84, 0.86, 0.89, 0.91,
+             0.93, 0.96, 0.98, 0.99]
 
     list_parameters = list(itertools.product(gamma_1, gamma_2, S))
+
+    # Add some rybski simulations
+    gamma_rybski = []
+    for i in range(1, 10):
+        gamma_rybski.extend([round(x, 3) for x in np.arange(i, i+1, 0.002)])
+    list_rybski = [(g1, g1, 1) for g1 in gamma_rybski]
+    list_parameters = list_parameters + list_rybski
+
     # Exclude special cases (repetitions)
     if not args.twosteps:
-        list_parameters = [(g1, g2, s) for g1, g2, s in list_parameters if s != 0.5 or (s == 0.5 and g1 <= g2)]
+        list_parameters = [(g1, g2, s) for g1, g2, s in list_parameters if (s != 0.5) or (s == 0.5 and g1 <= g2)]
     # Distribuite parameters
     random.shuffle(list_parameters)
 
@@ -239,9 +271,9 @@ def main():
             os.path.isfile(create_name_file(L, s, g1, g2, args.twosteps, configs))]
 
     print("TODO:", len(todo), "DONE:", len(done))
-    _ = [True for _ in Parallel(n_jobs=args.njobs, verbose=10, )(
+    _ = [True for _ in Parallel(n_jobs=args.njobs)(
         delayed(compute_simulation)(g1, g2, s, max_urbanization, L, args.verbose, args.twosteps, args.gpu, args.gpuid,
-                                    configs) for g1, g2, s in todo)]
+                                    configs) for g1, g2, s in tqdm(todo))]
 
 
 if __name__ == '__main__':

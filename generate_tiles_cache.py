@@ -25,7 +25,7 @@ def open_tif_file(tiff):
 
 
 def get_clusters_area(M):
-    labels = measure.label(M, connectivity=2)
+    labels = measure.label(M, connectivity=1)
     regions = measure.regionprops(labels, cache=False)
     cluster_pop = np.zeros(len(regions), dtype='int32')
     for i, x in enumerate(regions):

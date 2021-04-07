@@ -16,7 +16,7 @@ def create_name_file(L, S, gamma_1, gamma_2, model_type):
         dir = 'marco'
         filename = 'rybski_marco'
 
-    return '{filename}_{size}x{size}_s{S}_{gamma1}_{gamma2}.npz'.format(size=L, dir=dir, filename=filename, S=S,
+    return '{filename}_{size}x{size}_s{S}_{gamma1}_{gamma2}.npz'.format(size=L, dir=dir, filename=filename, S=int(S) if S == 1 else S,
                                                                         gamma1=gamma_1, gamma2=gamma_2)
 
 
@@ -33,7 +33,7 @@ def sample_from_ccdf(x, y, samples=1):
 
 
 def get_urban_phase_class(urban_area_km2, num_urban, tile_km2, macro_array, num_realisations=1000,
-                          num_samples=500):
+                          num_samples=100):
     x, y, n = macro_array
 
     assert urban_area_km2 > 0.
@@ -41,19 +41,23 @@ def get_urban_phase_class(urban_area_km2, num_urban, tile_km2, macro_array, num_
 
     null_model_num_urb = []
     for r in range(num_realisations):
-        samples = []
+        #samples = []
         sum_samples = 0.
         model_num_urb = 0.
-        while sum_samples < urban_area_km2:
-            model_num_urb += num_samples
-            new_draw = sample_from_ccdf(x, y, samples=num_samples)
-            sum_samples += sum(new_draw)
-            #                 samples += list(new_draw)
-            #             cumsum_samples = np.cumsum(samples)
-            #             model_num_urb = np.searchsorted(cumsum_samples, urban_area_km2 )
+        for n in [num_samples, 1]:
+            while sum_samples < urban_area_km2:
+                model_num_urb += n
+                new_draw = sample_from_ccdf(x, y, samples=n)
+                sum_samples += sum(new_draw)
+                #                 samples += list(new_draw)
+                #             cumsum_samples = np.cumsum(samples)
+                #             model_num_urb = np.searchsorted(cumsum_samples, urban_area_km2 )
 
-        model_num_urb -= num_samples
-        sum_samples -= sum(new_draw)
+            proposed_fixed = sum_samples - sum(new_draw)
+            if n != 1 or (
+                    proposed_fixed > 0 and abs(urban_area_km2 - proposed_fixed) < abs(urban_area_km2 - sum_samples)):
+                sum_samples = proposed_fixed
+                model_num_urb -= n
         model_num_urb += np.searchsorted(np.cumsum(new_draw), urban_area_km2 - sum_samples)
 
         null_model_num_urb += [model_num_urb]
@@ -62,8 +66,8 @@ def get_urban_phase_class(urban_area_km2, num_urban, tile_km2, macro_array, num_
 
 
 def get_num_clusters(M):
-    labels = measure.label(M, connectivity=2)
-    regions = measure.regionprops(labels)
+    labels = measure.label(M, connectivity=1)
+    regions = measure.regionprops(labels, cache=False)
 
     return len(regions)
 
@@ -148,6 +152,8 @@ def make_argument_parser():
                         default='1000', choices=['1000', 'rybski', 'marco'])
     parser.add_argument('--realtiles', dest='realtiles', action='store_true', help="Real tiles")
     parser.add_argument('--no-realtiles', dest='realtiles', action='store_false', help="Simulation tiles")
+    parser.add_argument('--distance', '-D',
+                        default='earth', choices=['energy', 'earth'])
 
     parser.set_defaults(realtiles=False)
     return parser
@@ -188,7 +194,8 @@ def main():
 
     else:
         json_comparisons = json.load(
-            open('{}/simulations/energy{}_1000x1000_lb0.01_hb1.0_all.json'.format(configs['generated_files_path'], args.model)))
+            open('{}/simulations/{}{}_1000x1000_lb0.01_hb1.0_all_1000.json'.format(configs['generated_files_path'],args.distance,
+                                                                                   args.model)))
         print("STEPS", len(json_comparisons))
         matches = [[t, p, q] for t, p, q in Parallel(n_jobs=args.njobs)(
             delayed(find_best_simulation_class)(match, tileid,
@@ -196,7 +203,9 @@ def main():
                                                 df_summary_macro.loc[tileid, 'full_tile_km2'], args.model, configs) for
             tileid, match in tqdm(json_comparisons.items()))]
 
-        output_filename = '{}/quantiles_classes_{}_all.csv'.format(configs['generated_files_path'], args.model)
+        output_filename = '{}/quantiles_classes_{}_all_{}.csv'.format(configs['generated_files_path'],
+                                                                         args.model,
+                                                                         args.distance)
 
     # Write results
     with open(output_filename, 'w') as csvfile:
