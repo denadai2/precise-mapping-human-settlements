@@ -5,8 +5,8 @@
 
 NJOBS=25
 DIMENSION="05"
-OUTPUT_RASTERDIR1="/unreliable/nadai/datasets/ema/sea/${DIMENSION}x${DIMENSION}"
-OUTPUT_RASTERDIR2="/unreliable/nadai/datasets/ema/hydro/${DIMENSION}x${DIMENSION}"
+OUTPUT_RASTERDIR1="/home/denadai/ema/deleteme/sea/${DIMENSION}x${DIMENSION}"
+OUTPUT_RASTERDIR2="/home/denadai/ema/deleteme/hydro/${DIMENSION}x${DIMENSION}"
 GDALCOMMANDS_DIR="data/generated_files/GDAL_commands"
 preprocessing_OutputFile="rasterize_sea_${DIMENSION}x${DIMENSION}.txt"
 hydro_OutputFile="rasterize_hydro_${DIMENSION}x${DIMENSION}.txt"
@@ -42,7 +42,7 @@ then
     for id in ${tiff_list};
     do
        extent=$( psql ${CONNECTION_STRING} -t -c "SELECT ST_Extent(geom) from tiles_land where tileid =${id} AND type='tile${DIMENSION}'" | head -n 1 | sed 's/ BOX(//g' | tr -d ')' | sed 's/,/ /g' | awk -F ' ' '{print $1, $2, $3, $4}' );
-       echo "gdal_rasterize -q -te ${extent} -ts ${npixels} ${npixels} -a_nodata 0 -burn 255 -i PG:\"dbname='ema' user='nadai'\" -sql \"SELECT tile_real_geom FROM tiles_land WHERE tileid=${id} AND type='tile${DIMENSION}'\" -co COMPRESS=PACKBITS -ot Byte ${OUTPUT_RASTERDIR1}/${id}.tif" >> "${GDALCOMMANDS_DIR}/${preprocessing_OutputFile}";
+       echo "gdal_rasterize -q -te ${extent} -ts ${npixels} ${npixels} -a_nodata 0 -burn 255 -i PG:${OGR_CONNECTION_STRING} -sql \"SELECT tile_real_geom FROM tiles_land WHERE tileid=${id} AND type='tile${DIMENSION}'\" -co COMPRESS=PACKBITS -ot Byte ${OUTPUT_RASTERDIR1}/${id}.tif" >> "${GDALCOMMANDS_DIR}/${preprocessing_OutputFile}";
        ProgressBar ${counter} ${len}
        counter=$((counter + 1))
     done

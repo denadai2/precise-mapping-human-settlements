@@ -33,7 +33,7 @@ then
     for id in ${tiff_list};
     do
        extent=$( psql ${CONNECTION_STRING} -t -c "SELECT ST_Extent(geom) from tiles_land where tileid =${id} AND type='tile${DIMENSION}'" | head -n 1 | sed 's/ BOX(//g' | tr -d ')' | sed 's/,/ /g' | awk -F ' ' '{print $1, $2, $3, $4}' );
-       echo "gdal_rasterize -q -te ${extent} -ts 5567 5567 -a_nodata 0 -burn 255 -i PG:\"${OGR_CONNECTION_STRING}\" -sql \"SELECT geom FROM urban_areas_view WHERE tileid=${id} AND type='tile${DIMENSION}'\" -co COMPRESS=PACKBITS -ot Byte ${OUTPUTRASTERDIR}/${id}.tif" >> "${GDALCOMMANDS_DIR}/${preprocessing_OutputFile}";
+       echo "gdal_rasterize -q -te ${extent} -ts 5567 5567 -a_nodata 0 -burn 255 -i PG:\"${OGR_CONNECTION_STRING}\" -sql \"SELECT geom FROM urban_areas_view WHERE tileid=${id} AND (NOT EXISTS(Select * from urban_areas_noise n where n.gid=urban_areas_view.gid)) AND type='tile${DIMENSION}'\" -co COMPRESS=PACKBITS -ot Byte ${OUTPUTRASTERDIR}/${id}.tif" >> "${GDALCOMMANDS_DIR}/${preprocessing_OutputFile}";
        ProgressBar ${counter} ${len}
        counter=$((counter + 1))
     done

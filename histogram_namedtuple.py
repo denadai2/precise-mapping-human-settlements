@@ -2,4 +2,4 @@
 from collections import namedtuple
 
 
-Comparison = namedtuple('Comparison', 'energy js kl earth filename step purban')
+Comparison = namedtuple('Comparison', 'js energy earth filename step purban')

@@ -255,7 +255,7 @@ copy (select tileid, urban_area_km2 from urban_areas_view where type='tile05') T
 ## 4- Stats
 Urban percentage: 1.474983848026523474688154
 ```sql
-select avg(case when tile_km2 <= 0 then 0 when urban_area_km2 > tile_km2 then 100 else (urban_area_km2/tile_km2 end) from summary_tiles_05x05;
+select 100*avg(case when tile_km2 <= 0 then 0 when urban_area_km2 > tile_km2 then 1 else urban_area_km2/tile_km2 end) from summary_tiles_05x05;
 ```
 
 Urban area: 1107682.428039

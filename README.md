@@ -2,7 +2,7 @@
 
 This repository contains all the code required to reproduce the results presented in the following paper:
 
-* E. Strano, F. Simini, M. De Nadai, T. Esch, and M. Marconcini. *Precise mapping, density and spatial structure of all human settlements on Earth*, 2019.
+* E. Strano, F. Simini, M. De Nadai, T. Esch, and M. Marconcini. *The agglomeration and dispersion dichotomy of human settlements on Earth*, Sci Rep 11, 23289 (2021). [10.1038/s41598-021-02743-9](https://doi.org/10.1038/s41598-021-02743-9).
 
 ## Getting Started
 

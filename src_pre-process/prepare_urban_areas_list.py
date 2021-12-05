@@ -33,7 +33,6 @@ def get_clusters_km2(tile, orig_tile_km):
 def main():
     df_km2tiles = pd.read_csv('../data/generated_files/tiles_fullkm2_05x05.csv', dtype={'tileid': 'str'})
     df_km2tiles = df_km2tiles.set_index('tileid')
-    df_km2tiles.head()
 
     clusters_areas_km2 = {tileid: kms for tileid, kms in Parallel(n_jobs=10, verbose=3)(
         delayed(get_clusters_km2)(tile, df_km2tiles.loc[tile, 'full_tile_km2']) for tile in df_km2tiles.index.tolist())}

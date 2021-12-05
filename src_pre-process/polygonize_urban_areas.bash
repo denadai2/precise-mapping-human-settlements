@@ -3,8 +3,9 @@
 NJOBS=15
 DIMENSION="05"
 BASE_PATH="/home/denadai/ema"
-VRT_PATH="/unreliable/nadai/datasets/ema/GUF+/myguf+.vrt"
-OUTPUTRASTERDIR="/home/denadai/ema/data/GUF+/${DIMENSION}x${DIMENSION}"
+TIF_PATH="/home/denadai/ema/data/WSF2015/WSF2015_v1_EPSG4326"
+VRT_PATH="/home/denadai/ema/data/WSF2015/WSF2015.vrt"
+OUTPUTRASTERDIR="/home/denadai/ema/data/WSF2015/${DIMENSION}x${DIMENSION}"
 TMP_RASTERS_DIR="/home/denadai/ema/tmp"
 GDALCOMMANDS_DIR="/home/denadai/ema/data/generated_files/GDAL_commands"
 
@@ -34,7 +35,7 @@ then
     psql ${CONNECTION_STRING} -c "DELETE FROM world075_gp"
     psql ${CONNECTION_STRING} -c "ALTER SEQUENCE world075_gp_ogc_fid_seq RESTART WITH 1;"
 
-    gdalbuildvrt ${VRT_PATH} -srcnodata "0" -hidenodata -resolution highest /unreliable/nadai/datasets/ema/GUF+/v003/*.tif
+    gdalbuildvrt ${VRT_PATH} -srcnodata "0" -hidenodata -resolution highest ${TIF_PATH}/*.tif
 
     # Creates tif
     tiff_list=$(ogrinfo -ro -al "PG:${OGR_CONNECTION_STRING}" -sql "SELECT tileid::varchar from tiles_land where type='tile${DIMENSION}'" | grep 'tileid (' | sed -E 's/.*String[\)]\s=\s//g' | uniq );
@@ -45,8 +46,8 @@ then
     for id in ${tiff_list};
     do
        extent=$( psql ${CONNECTION_STRING} -t -c "SELECT ST_Extent(geom) from tiles_land where tileid =${id} AND type='tile${DIMENSION}'" | head -n 1 | sed 's/ BOX(//g' | tr -d ')' | sed 's/,/ /g' | awk -F ' ' '{print $1, $4, $3, $2}' );
-       echo "gdal_translate -strict -a_nodata 0 -projwin $extent -of GTiff -q -co COMPRESS=PACKBITS ${VRT_PATH} ${TMP_RASTERS_DIR}/${id}.tif && python3 ${BASE_PATH}/gdal_calc.py -A ${TMP_RASTERS_DIR}/${id}.tif --quiet --overwrite --outfile=${OUTPUTRASTERDIR}/${id}.tif --calc=\"(A==1)\" --co=\"COMPRESS=PACKBITS\" --NoDataValue=255" >> "${GDALCOMMANDS_DIR}/${preprocessing_OutputFile}";
-       echo "PG_USE_COPY=YES python3 ${BASE_PATH}/gdal_polygonize.py ${OUTPUTRASTERDIR}/${id}.tif -q -b 1 -f PostgreSQL PG:\"${OGR_CONNECTION_STRING}\" world075_gp && rm ${OUTPUTRASTERDIR}/${id}.tif && rm ${TMP_RASTERS_DIR}/${id}.tif" >> "${GDALCOMMANDS_DIR}/${polygonize_OutputFile}";
+       echo "gdal_translate -strict -a_nodata 0 -projwin $extent -of GTiff -q -co COMPRESS=PACKBITS ${VRT_PATH} ${TMP_RASTERS_DIR}/${id}.tif && python3 ${BASE_PATH}/src_pre-process/gdal_calc.py -A ${TMP_RASTERS_DIR}/${id}.tif --quiet --overwrite --outfile=${OUTPUTRASTERDIR}/${id}.tif --calc=\"(A==1)\" --co=\"COMPRESS=PACKBITS\" --NoDataValue=255" >> "${GDALCOMMANDS_DIR}/${preprocessing_OutputFile}";
+       echo "PG_USE_COPY=YES python3 ${BASE_PATH}/src_pre-process/gdal_polygonize.py ${OUTPUTRASTERDIR}/${id}.tif -q -b 1 -f PostgreSQL PG:\"${OGR_CONNECTION_STRING}\" world075_gp && rm ${OUTPUTRASTERDIR}/${id}.tif && rm ${TMP_RASTERS_DIR}/${id}.tif" >> "${GDALCOMMANDS_DIR}/${polygonize_OutputFile}";
        ProgressBar ${counter} ${len}
        counter=$((counter + 1))
     done
