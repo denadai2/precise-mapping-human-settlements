@@ -10,12 +10,12 @@ from os import listdir
 from os.path import isfile, join
 import scipy
 from histogram_namedtuple import *
-from scipy.stats import energy_distance
-from scipy.stats import wasserstein_distance
+from scipy.stats import wasserstein_distance, energy_distance
 from tqdm import tqdm
 from config_loader import *
 from itertools import chain
 import gzip
+import time
 
 
 def filename2parameters(filename):
@@ -25,7 +25,7 @@ def filename2parameters(filename):
 
 
 def get_clusters_area(M):
-    labels = measure.label(M, connectivity=2)
+    labels = measure.label(M, connectivity=1)
     regions = measure.regionprops(labels, cache=False)
     cluster_pop = np.zeros(len(regions), dtype='int32')
     for i, x in enumerate(regions):
@@ -39,11 +39,11 @@ def JS(p, q):
     return (scipy.stats.entropy(p, m) + scipy.stats.entropy(q, m)) / 2
 
 
-def get_simulation(h_real_tile, filename, path, urbanization_perc, range_urb=0.015, tile_size=1000):
+def get_simulation(bins, histogram_tile, hist1, filename, path, urbanization_perc, range_urb, tile_size=1000):
     with np.load('{}/{}'.format(path, filename)) as fload:
         perc_urban = fload['perc']
 
-        start = max(urbanization_perc - range_urb, 0.01)
+        start = max(urbanization_perc - range_urb, 0.005)
         stop = urbanization_perc + range_urb
 
         max_steps = len(perc_urban)
@@ -53,28 +53,18 @@ def get_simulation(h_real_tile, filename, path, urbanization_perc, range_urb=0.0
 
     comparisons = []
     perc_array = perc_urban[steps]
-    real_unique_areas, real_counts = np.unique(h_real_tile, return_counts=True)
     for s in good_steps:
         perc_tile = perc_array[s]
         h_sim_tile = saved_steps['s{}'.format(s)]
-        sim_unique_areas, sim_counts = np.unique(h_sim_tile, return_counts=True)
-        common_elements = np.unique(np.concatenate((real_unique_areas, sim_unique_areas)))
-        n_commons = len(common_elements)
+        hist2, _ = np.histogram(np.sqrt(h_sim_tile), bins=bins)
 
-        energy_score = energy_distance(h_real_tile, h_sim_tile)
-        earth_score = wasserstein_distance(h_real_tile, h_sim_tile)
+        js_score = scipy.spatial.distance.jensenshannon(hist1, hist2)
 
-        h_temp1 = np.zeros(n_commons)
-        h_temp2 = np.zeros(n_commons)
-        h_temp1[np.in1d(common_elements, real_unique_areas)] = real_counts
-        h_temp2[np.in1d(common_elements, sim_unique_areas)] = sim_counts
+        energy_score = energy_distance(histogram_tile, h_sim_tile)
+        earth_score = wasserstein_distance(histogram_tile, h_sim_tile)
 
-        js_score = JS(h_temp1+0.00000001, h_temp2+0.00000001)
-        kl_score = scipy.stats.entropy(h_temp1+0.00000001, h_temp2+0.00000001)
-
-        comparisons.append(Comparison(energy=float(energy_score),
-                                      js=float(js_score),
-                                      kl=float(kl_score),
+        comparisons.append(Comparison(js=float(js_score),
+                                      energy=float(energy_score),
                                       earth=float(earth_score),
                                       filename=filename,
                                       purban=perc_tile,
@@ -82,7 +72,7 @@ def get_simulation(h_real_tile, filename, path, urbanization_perc, range_urb=0.0
     return comparisons
 
 
-def process_tile(tileid, simulation_files, tiles_cache_folder, simulations_cache_folder, metrics, distances_folder, args):
+def process_tile(tileid, simulation_files, tiles_cache_folder, simulations_cache_folder, metrics, distances_folder, args, range_urb=0.01):
     with np.load('{}/{}.npz'.format(tiles_cache_folder, tileid)) as fload:
         M = fload['M']
         urban_percentage = fload['purb']
@@ -90,9 +80,22 @@ def process_tile(tileid, simulation_files, tiles_cache_folder, simulations_cache
     assert 0 < urban_percentage < 1
 
     histogram_tile = get_clusters_area(M)
+    bins = np.arange(1, 800)
+    hist1, _ = np.histogram(np.sqrt(histogram_tile), bins=bins)
 
-    results = [get_simulation(histogram_tile.copy(), filename, simulations_cache_folder, urban_percentage,
-                                tile_size=1000) for filename in simulation_files]
+    filtered_simulation_files = []
+    for f in simulation_files:
+        params = f.split('_')
+        params[-1] = params[-1].replace('.npz', '')
+        params[-3] = params[-3].replace('s', '')
+
+        if args.model == '1000' and params[-1] != params[-2] and float(params[-3]) > urban_percentage+range_urb:
+            continue
+
+        filtered_simulation_files.append(f)
+
+    results = [get_simulation(bins, histogram_tile, hist1, filename, simulations_cache_folder, urban_percentage,
+                                tile_size=1000, range_urb=range_urb) for filename in filtered_simulation_files]
     comparisons = list(chain(*results))
     to_return = {}
     if comparisons:
@@ -170,15 +173,22 @@ def main():
 
     simulations_cache_folder = '{}/cachesimulations/{}'.format(configs['generated_files_path'], model_var)
     tiles_cache_folder = 'data/cache_numpy_05x05'
-    distances_folder = '{}/simulations/distances1000'.format(configs['generated_files_path'])
+    distances_folder = '{}/simulations/distances'.format(configs['generated_files_path'])
     comparisons_folder = '{}/simulations'.format(configs['generated_files_path'])
 
     if len([f for f in listdir(distances_folder) if not f.startswith('.')]):
         print("WARNING: distances folder is not empty")
 
-    metrics = ['energy', 'js', 'kl', 'earth']
+    metrics = ['js', 'energy', 'earth']
     simulation_files = [f for f in listdir(simulations_cache_folder) if
                         isfile(join(simulations_cache_folder, f)) and 'npz' in f]
+
+    new_simulation_files = []
+    for s in simulation_files:
+        s_splitted = s.split('_')
+        if s_splitted[-1].replace('.npz', '') != s_splitted[-2] or (s_splitted[-1].replace('.npz', '') == s_splitted[-2] and s_splitted[-3] == 's0.5'):
+            new_simulation_files.append(s)
+    simulation_files = new_simulation_files
     if args.model == 'marco':
         simulation_files = [f for f in listdir(simulations_cache_folder) if
                             isfile(join(simulations_cache_folder, f)) and 'npz' in f and 'marco' in f]
@@ -190,7 +200,7 @@ def main():
 
     print("N Simulations", len(simulation_files))
 
-    df_classes = pd.read_csv('{}/quantiles_classes_1000.csv'.format(configs['generated_files_path']), dtype={'tileid': str})
+    df_classes = pd.read_csv('{}/quantiles_classes.csv'.format(configs['generated_files_path']), dtype={'tileid': str})
 
     # Read summary of tiles
     df = pd.read_csv('{}/summary_tiles_05x05.csv'.format(configs['generated_files_path']), dtype={'tileid': 'str'})
@@ -199,9 +209,6 @@ def main():
 
     df = pd.merge(df[['tileid', 'perc_urban', 'perc_constraint']], df_classes, on='tileid')
 
-    # Discard tiles with constraints >= 0.4
-    # df = df[df['perc_constraint'] < 0.4]
-
     # Creates the bins
     lb, hb = (0.01, 1.)
 
@@ -209,7 +216,7 @@ def main():
     print("SAMPLE size ({}, {}]: {}".format(lb, hb, len(df_sampled)))
 
     tiles = df_sampled['tileid'].values
-    parallel_results = [r for r in Parallel(n_jobs=args.njobs)(delayed(process_tile)(tileid, simulation_files, tiles_cache_folder, simulations_cache_folder, metrics, distances_folder, args) for _, tileid in enumerate(tqdm(tiles))) if r]
+    parallel_results = [r for r in Parallel(n_jobs=args.njobs)(delayed(process_tile)(tileid, simulation_files, tiles_cache_folder, simulations_cache_folder, metrics, distances_folder, args, range_urb=0.005) for _, tileid in enumerate(tqdm(tiles))) if r]
 
     similarity_results = defaultdict(dict)
     for p in parallel_results:
