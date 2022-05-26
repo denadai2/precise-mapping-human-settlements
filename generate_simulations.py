@@ -1,21 +1,23 @@
-import cupy as cp
-from joblib import Parallel, delayed
-import itertools
-import random
-import os.path
 import argparse
-import time
+import itertools
+import os.path
+import random
 import sys
+import time
+
+import cupy as cp
+from joblib import Parallel
+from joblib import delayed
 from tqdm import tqdm
 
 ssw = sys.stdout.write
 ssf = sys.stdout.flush
 import numpy as np
+
 from config_loader import *
 
 
-class Rybski():
-
+class Rybski:
     def __init__(self, gamma1, gamma2, L, use_gpu=False, prob=0.5):
         self.gamma1 = gamma1
         self.gamma2 = gamma2
@@ -52,12 +54,12 @@ class Rybski():
             raise EnvironmentError("Set gamma2")
 
         dist = self.create_distance_matrix(self.L, maxdist=1e10, PBC=True).astype('float64')
-        dist[0, 0] = 1.
-        dist_gamma1 = dist ** -self.gamma1
-        dist_gamma1[0, 0] = 0.
+        dist[0, 0] = 1.0
+        dist_gamma1 = dist**-self.gamma1
+        dist_gamma1[0, 0] = 0.0
 
-        dist_gamma2 = dist ** -self.gamma2
-        dist_gamma2[0, 0] = 0.
+        dist_gamma2 = dist**-self.gamma2
+        dist_gamma2[0, 0] = 0.0
 
         if self.use_gpu:
             M = cp.asarray(M)
@@ -73,23 +75,35 @@ class Rybski():
         else:
             cache_previous_step = np.zeros_like(dist_gamma1)
         for t in range(max_steps):
-            M1 = ((M > 0) * 1.).astype('float32')
+            M1 = ((M > 0) * 1.0).astype('float32')
 
-            frac_complete = np.sum(M1) / self.L ** 2
+            frac_complete = np.sum(M1) / self.L**2
             if frac_complete > stop_at_frac_compl:
                 break
             if verbose:
-                ssw(' %s -- %.3f - g %.3f s %s ...          \r' % (t, frac_complete, self.gamma2 if (
-                            (self.twosteps and self.is_second_step) or (
-                                not self.twosteps and np.random.uniform() >= self.prob)) else self.gamma1,
-                                                                   stop_at_frac_compl))
+                ssw(
+                    ' %s -- %.3f - g %.3f s %s ...          \r'
+                    % (
+                        t,
+                        frac_complete,
+                        self.gamma2
+                        if (
+                            (self.twosteps and self.is_second_step)
+                            or (not self.twosteps and np.random.uniform() >= self.prob)
+                        )
+                        else self.gamma1,
+                        stop_at_frac_compl,
+                    )
+                )
                 ssf()
 
-            M0 = ((M < 0.5) * 1.)
+            M0 = (M < 0.5) * 1.0
             M += M1
 
             dist_gamma = dist_gamma1
-            if (self.twosteps and self.is_second_step) or ((not self.twosteps) and np.random.uniform() >= self.prob):
+            if (self.twosteps and self.is_second_step) or (
+                (not self.twosteps) and np.random.uniform() >= self.prob
+            ):
                 dist_gamma = dist_gamma2
 
             if self.use_gpu:
@@ -99,7 +113,9 @@ class Rybski():
 
             # Computes only the indexes not computed in the previous step
             if self.use_gpu:
-                q = sum(cp.roll(dist_gamma, (i, j), axis=(0, 1)) for i, j in cp.asnumpy(new_nonzeros))
+                q = sum(
+                    cp.roll(dist_gamma, (i, j), axis=(0, 1)) for i, j in cp.asnumpy(new_nonzeros)
+                )
             else:
                 q = sum(np.roll(dist_gamma, (i, j), axis=(0, 1)) for i, j in new_nonzeros)
             # Sum from previous step
@@ -111,15 +127,17 @@ class Rybski():
             else:
                 q = q * M0
 
-            if stop_at_frac_compl < 0.01 and frac_complete < 0.001:  # and (not (self.twosteps and self.is_second_step))
+            if (
+                stop_at_frac_compl < 0.01 and frac_complete < 0.001
+            ):  # and (not (self.twosteps and self.is_second_step))
                 # 0.0005% of the area becomes urban at each step
-                new_per_step = max(self.L ** 2 // (50000.), 1)
+                new_per_step = max(self.L**2 // (50000.0), 1)
             elif frac_complete < 0.01:  # and (not (self.twosteps and self.is_second_step))
                 # 0.005% of the area becomes urban at each step
-                new_per_step = max(self.L ** 2 // (5000.), 1)
+                new_per_step = max(self.L**2 // (5000.0), 1)
             else:
                 # 1% of the area becomes urban at each step
-                new_per_step = max(self.L ** 2 // (100.), 1)
+                new_per_step = max(self.L**2 // (100.0), 1)
 
             if self.use_gpu:
                 q /= cp.sum(q)
@@ -132,12 +150,12 @@ class Rybski():
             asd = np.random.multinomial(int(new_per_step), q.flatten())
             M_prev = M.copy()
             if self.use_gpu:
-                M += (cp.reshape(cp.asarray(asd), (self.L, self.L)) > 0.5) * 1.
+                M += (cp.reshape(cp.asarray(asd), (self.L, self.L)) > 0.5) * 1.0
             else:
-                M += (np.reshape(asd, (self.L, self.L)) > 0.5) * 1.
+                M += (np.reshape(asd, (self.L, self.L)) > 0.5) * 1.0
 
         if verbose:
-            ssw('\n');
+            ssw('\n')
             ssf()
             print(t, frac_complete, self.gamma1, self.gamma2)
             end = time.time()
@@ -154,10 +172,19 @@ def create_name_file(L, S, gamma_1, gamma_2, twosteps, configs):
         filename = 'rybski_marco'
 
     return '{sim_dir}/{dir}/{filename}_{size}x{size}_s{S}_{gamma1}_{gamma2}.npz'.format(
-        sim_dir=configs["simulations_path"], size=L, dir=dir, filename=filename, S=S, gamma1=gamma_1, gamma2=gamma_2)
+        sim_dir=configs["simulations_path"],
+        size=L,
+        dir=dir,
+        filename=filename,
+        S=S,
+        gamma1=gamma_1,
+        gamma2=gamma_2,
+    )
 
 
-def compute_simulation(gamma_1, gamma_2, S, max_urbanization, L, verbose, twosteps, use_gpu, gpuid, configs):
+def compute_simulation(
+    gamma_1, gamma_2, S, max_urbanization, L, verbose, twosteps, use_gpu, gpuid, configs
+):
     if use_gpu:
         cp.cuda.Device(gpuid).use()
 
@@ -180,17 +207,23 @@ def compute_simulation(gamma_1, gamma_2, S, max_urbanization, L, verbose, twoste
 
     if twosteps:
         # 1st stage
-        M1, M_prev = ryb.simulate_rybski(M=M0, M_prev=M_prev, stop_at_frac_compl=stop_at_frac_compl, verbose=verbose)
+        M1, M_prev = ryb.simulate_rybski(
+            M=M0, M_prev=M_prev, stop_at_frac_compl=stop_at_frac_compl, verbose=verbose
+        )
 
-        frac_complete = np.sum(M1) / L ** 2
+        frac_complete = np.sum(M1) / L**2
         if frac_complete > max_urbanization:
             M = M1
         else:
             # 2nd stage
             ryb.is_second_step = True
-            M, M_prev = ryb.simulate_rybski(M=M1, M_prev=M_prev, stop_at_frac_compl=max_urbanization, verbose=verbose)
+            M, M_prev = ryb.simulate_rybski(
+                M=M1, M_prev=M_prev, stop_at_frac_compl=max_urbanization, verbose=verbose
+            )
     else:
-        M, M_prev = ryb.simulate_rybski(M=M0, M_prev=M_prev, stop_at_frac_compl=stop_at_frac_compl, verbose=verbose)
+        M, M_prev = ryb.simulate_rybski(
+            M=M0, M_prev=M_prev, stop_at_frac_compl=stop_at_frac_compl, verbose=verbose
+        )
 
     np.savez(filename, M=cp.asnumpy(M).astype('float32'))
 
@@ -203,21 +236,18 @@ def make_argument_parser():
     sys.argv
     :return:
     """
-    parser = argparse.ArgumentParser(
-        description="Create simulations through the GPU or the CPU"
-    )
-    parser.add_argument('--njobs', '-J',
-                        default=10, type=int)
-    parser.add_argument('--size', '-S',
-                        default=1000, type=int)
+    parser = argparse.ArgumentParser(description="Create simulations through the GPU or the CPU")
+    parser.add_argument('--njobs', '-J', default=10, type=int)
+    parser.add_argument('--size', '-S', default=1000, type=int)
     parser.add_argument('--verbose', dest='verbose', action='store_true')
     parser.add_argument('--no-verbose', dest='verbose', action='store_false')
     parser.add_argument('--gpu', dest='gpu', action='store_true')
     parser.add_argument('--no-gpu', dest='gpu', action='store_false')
     parser.add_argument('--twosteps', dest='twosteps', action='store_true', help="Two steps model")
-    parser.add_argument('--no-twosteps', dest='twosteps', action='store_false', help="Probabilistic model")
-    parser.add_argument('--gpuid', '-G',
-                        default=0, type=int)
+    parser.add_argument(
+        '--no-twosteps', dest='twosteps', action='store_false', help="Probabilistic model"
+    )
+    parser.add_argument('--gpuid', '-G', default=0, type=int)
     parser.add_argument('--slist', nargs='+', type=float)
 
     parser.set_defaults(verbose=False, twosteps=True, gpu=False)
@@ -236,44 +266,133 @@ def main():
         cp.cuda.Device(args.gpuid).use()
 
     # Sprawl: first compact, then random
-    gamma_1 = [1., 1.4, 1.8, 2., 2.2, 2.4, 2.6, 2.8, 3., 3.2, 3.4, 3.6, 3.8, 4., 5., 6., 8., 10.]
+    gamma_1 = [
+        1.0,
+        1.4,
+        1.8,
+        2.0,
+        2.2,
+        2.4,
+        2.6,
+        2.8,
+        3.0,
+        3.2,
+        3.4,
+        3.6,
+        3.8,
+        4.0,
+        5.0,
+        6.0,
+        8.0,
+        10.0,
+    ]
     gamma_2 = gamma_1[:]
-    S = [0.0002, 0.00005, 0.0008, 0.0001, 0.0004, 0.0006, 0.001, 0.002, 0.004, 0.006, 0.008, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
-         0.09, 0.1,
-         0.2, 0.3,
-         0.4, 0.5]
+    S = [
+        0.0002,
+        0.00005,
+        0.0008,
+        0.0001,
+        0.0004,
+        0.0006,
+        0.001,
+        0.002,
+        0.004,
+        0.006,
+        0.008,
+        0.01,
+        0.02,
+        0.03,
+        0.04,
+        0.05,
+        0.06,
+        0.07,
+        0.08,
+        0.09,
+        0.1,
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+    ]
     if args.slist:
         S = args.slist
     max_urbanization = 0.6
 
     if not args.twosteps:
-        S = [0.5, 0.51, 0.52, 0.54, 0.57, 0.59, 0.61, 0.64, 0.66, 0.68, 0.71, 0.73, 0.75, 0.77, 0.79, 0.82, 0.84, 0.86, 0.89, 0.91,
-             0.93, 0.96, 0.98, 0.99]
+        S = [
+            0.5,
+            0.51,
+            0.52,
+            0.54,
+            0.57,
+            0.59,
+            0.61,
+            0.64,
+            0.66,
+            0.68,
+            0.71,
+            0.73,
+            0.75,
+            0.77,
+            0.79,
+            0.82,
+            0.84,
+            0.86,
+            0.89,
+            0.91,
+            0.93,
+            0.96,
+            0.98,
+            0.99,
+        ]
 
     list_parameters = list(itertools.product(gamma_1, gamma_2, S))
 
     # Add some rybski simulations
     gamma_rybski = []
     for i in range(1, 10):
-        gamma_rybski.extend([round(x, 3) for x in np.arange(i, i+1, 0.002)])
+        gamma_rybski.extend([round(x, 3) for x in np.arange(i, i + 1, 0.002)])
     list_rybski = [(g1, g1, 1) for g1 in gamma_rybski]
     list_parameters = list_parameters + list_rybski
 
     # Exclude special cases (repetitions)
     if not args.twosteps:
-        list_parameters = [(g1, g2, s) for g1, g2, s in list_parameters if (s != 0.5) or (s == 0.5 and g1 <= g2)]
+        list_parameters = [
+            (g1, g2, s) for g1, g2, s in list_parameters if (s != 0.5) or (s == 0.5 and g1 <= g2)
+        ]
     # Distribuite parameters
     random.shuffle(list_parameters)
 
-    todo = [(g1, g2, s) for g1, g2, s in list_parameters if
-            not os.path.isfile(create_name_file(L, s, g1, g2, args.twosteps, configs))]
-    done = [(g1, g2, s) for g1, g2, s in list_parameters if
-            os.path.isfile(create_name_file(L, s, g1, g2, args.twosteps, configs))]
+    todo = [
+        (g1, g2, s)
+        for g1, g2, s in list_parameters
+        if not os.path.isfile(create_name_file(L, s, g1, g2, args.twosteps, configs))
+    ]
+    done = [
+        (g1, g2, s)
+        for g1, g2, s in list_parameters
+        if os.path.isfile(create_name_file(L, s, g1, g2, args.twosteps, configs))
+    ]
 
     print("TODO:", len(todo), "DONE:", len(done))
-    _ = [True for _ in Parallel(n_jobs=args.njobs)(
-        delayed(compute_simulation)(g1, g2, s, max_urbanization, L, args.verbose, args.twosteps, args.gpu, args.gpuid,
-                                    configs) for g1, g2, s in tqdm(todo))]
+    _ = [
+        True
+        for _ in Parallel(n_jobs=args.njobs)(
+            delayed(compute_simulation)(
+                g1,
+                g2,
+                s,
+                max_urbanization,
+                L,
+                args.verbose,
+                args.twosteps,
+                args.gpu,
+                args.gpuid,
+                configs,
+            )
+            for g1, g2, s in tqdm(todo)
+        )
+    ]
 
 
 if __name__ == '__main__':

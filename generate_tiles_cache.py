@@ -1,15 +1,18 @@
-import numpy as np
-from joblib import Parallel, delayed
-import os
-
-from os import listdir
-from os.path import isfile, join
 import argparse
-from skimage import measure
+import os
+from os import listdir
+from os.path import isfile
+from os.path import join
+
 import gdal
-from config_loader import *
+import numpy as np
+from joblib import Parallel
+from joblib import delayed
 from PIL import Image
+from skimage import measure
 from tqdm import tqdm
+
+from config_loader import *
 
 
 def open_tif_file(tiff):
@@ -49,8 +52,8 @@ def compute_cache_simulation_tiles(input_path, output_path, filename):
     perc_array = np.zeros(nsteps, 'float32')
     urb_steps = {}
     for s in range(nsteps):
-        Mtemp = (1. * (M > s))
-        perc_array[s] = np.sum(Mtemp)/(L**2)
+        Mtemp = 1.0 * (M > s)
+        perc_array[s] = np.sum(Mtemp) / (L**2)
         urb_steps['s{}'.format(s)] = get_clusters_area(Mtemp)
 
     np.savez_compressed(save_filename, perc=perc_array, M=M, **urb_steps)
@@ -66,12 +69,12 @@ def compute_cache_real_tiles(input_path, output_path, filename):
 
     M = open_tif_file('{}/{}'.format(input_path, filename))
     M = ((M == 0) * 1).astype('uint8')
-    im = Image.fromarray(M*255, mode='L').convert('1')
+    im = Image.fromarray(M * 255, mode='L').convert('1')
     M = np.asarray(im.resize((1000, 1000), Image.NEAREST), dtype='uint8')
 
     L = M.shape[0]
     assert L == 1000
-    perc_urb = np.sum(M)/(L**2)
+    perc_urb = np.sum(M) / (L**2)
     assert 0 <= perc_urb <= 1
 
     np.savez_compressed(save_filename, purb=perc_urb, M=M)
@@ -88,14 +91,21 @@ def make_argument_parser():
     parser = argparse.ArgumentParser(
         description="Launch cache generation for simulated and real tiles"
     )
-    parser.add_argument('--njobs', '-J',
-                        default=10, type=int)
-    parser.add_argument('--size', '-S',
-                        default=1000, type=int)
+    parser.add_argument('--njobs', '-J', default=10, type=int)
+    parser.add_argument('--size', '-S', default=1000, type=int)
     parser.add_argument('--twosteps', dest='twosteps', action='store_true', help="Two steps model")
-    parser.add_argument('--no-twosteps', dest='twosteps', action='store_false', help="Probabilistic model")
-    parser.add_argument('--realtiles', dest='realtiles', action='store_true', help="Real tiles cache generation")
-    parser.add_argument('--no-realtiles', dest='realtiles', action='store_false', help="Simulation tiles cache generation")
+    parser.add_argument(
+        '--no-twosteps', dest='twosteps', action='store_false', help="Probabilistic model"
+    )
+    parser.add_argument(
+        '--realtiles', dest='realtiles', action='store_true', help="Real tiles cache generation"
+    )
+    parser.add_argument(
+        '--no-realtiles',
+        dest='realtiles',
+        action='store_false',
+        help="Simulation tiles cache generation",
+    )
 
     parser.set_defaults(twosteps=True, realtiles=False)
     return parser
@@ -118,8 +128,13 @@ def main():
         onlyfiles = [f for f in listdir(input_path) if isfile(join(input_path, f)) and 'tif' in f]
         print("N Real tiles", len(onlyfiles))
 
-        _ = [True for _ in Parallel(n_jobs=args.njobs)(
-            delayed(compute_cache_real_tiles)(input_path, output_path, f) for f in tqdm(onlyfiles))]
+        _ = [
+            True
+            for _ in Parallel(n_jobs=args.njobs)(
+                delayed(compute_cache_real_tiles)(input_path, output_path, f)
+                for f in tqdm(onlyfiles)
+            )
+        ]
 
     input_path = '{}/{}'.format(configs["simulations_path"], model_var)
     output_path = '{}/{}'.format(configs["simulations_cache_path"], model_var)
@@ -127,9 +142,19 @@ def main():
     print("N Simulations", len(onlyfiles))
 
     # Filter for those files that are not existing
-    onlyfiles = [f for f in onlyfiles if not os.path.isfile('{}/{}'.format(output_path, f.replace('tif', 'npz')))]
+    onlyfiles = [
+        f
+        for f in onlyfiles
+        if not os.path.isfile('{}/{}'.format(output_path, f.replace('tif', 'npz')))
+    ]
 
-    _ = [True for _ in Parallel(n_jobs=args.njobs)(delayed(compute_cache_simulation_tiles)(input_path, output_path, f) for f in tqdm(onlyfiles))]
+    _ = [
+        True
+        for _ in Parallel(n_jobs=args.njobs)(
+            delayed(compute_cache_simulation_tiles)(input_path, output_path, f)
+            for f in tqdm(onlyfiles)
+        )
+    ]
 
 
 if __name__ == '__main__':

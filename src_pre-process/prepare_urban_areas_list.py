@@ -1,10 +1,12 @@
-import numpy as np
-import os
-import gzip
-import pandas as pd
-from joblib import Parallel, delayed
-from skimage import measure
 import csv
+import gzip
+import os
+
+import numpy as np
+import pandas as pd
+from joblib import Parallel
+from joblib import delayed
+from skimage import measure
 
 
 def get_clusters_area(M, minpop):
@@ -31,13 +33,22 @@ def get_clusters_km2(tile, orig_tile_km):
 
 
 def main():
-    df_km2tiles = pd.read_csv('../data/generated_files/tiles_fullkm2_05x05.csv', dtype={'tileid': 'str'})
+    df_km2tiles = pd.read_csv(
+        '../data/generated_files/tiles_fullkm2_05x05.csv', dtype={'tileid': 'str'}
+    )
     df_km2tiles = df_km2tiles.set_index('tileid')
 
-    clusters_areas_km2 = {tileid: kms for tileid, kms in Parallel(n_jobs=10, verbose=3)(
-        delayed(get_clusters_km2)(tile, df_km2tiles.loc[tile, 'full_tile_km2']) for tile in df_km2tiles.index.tolist())}
+    clusters_areas_km2 = {
+        tileid: kms
+        for tileid, kms in Parallel(n_jobs=10, verbose=3)(
+            delayed(get_clusters_km2)(tile, df_km2tiles.loc[tile, 'full_tile_km2'])
+            for tile in df_km2tiles.index.tolist()
+        )
+    }
 
-    with gzip.open('../data/generated_files/filippo_areas_reduced4.csv.gz', "wt", newline="") as csvfile:
+    with gzip.open(
+        '../data/generated_files/filippo_areas_reduced4.csv.gz', "wt", newline=""
+    ) as csvfile:
         spamwriter = csv.writer(csvfile)
 
         spamwriter.writerow(['tileid', 'area_km2'])
